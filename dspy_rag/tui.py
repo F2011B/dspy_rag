@@ -12,7 +12,7 @@ from prompt_toolkit.layout.dimension import Dimension
 from prompt_toolkit.layout.containers import Window
 from prompt_toolkit.widgets import TextArea, Frame
 
-from .rag import AnswerResult, RAGAppState, Source
+from .rag import AnswerResult, RAGAppState, Source, format_exception_chain
 
 
 @dataclass
@@ -234,7 +234,7 @@ class FolderRAGTUI:
             try:
                 await asyncio.to_thread(self.app_state.reindex)
             except Exception as exc:
-                self.append_message("system", f"Reindex failed: {exc}")
+                self.append_message("system", f"Reindex failed:\n{format_exception_chain(exc)}")
             else:
                 self.append_message("system", "Reindex completed.")
             finally:
@@ -252,7 +252,7 @@ class FolderRAGTUI:
             try:
                 result: AnswerResult = await asyncio.to_thread(self.app_state.answer, question)
             except Exception as exc:
-                self.append_message("system", f"Error: {exc}")
+                self.append_message("system", f"Error:\n{format_exception_chain(exc)}")
                 self.spinner.stop(self.default_status())
                 return
 

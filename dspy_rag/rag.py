@@ -264,6 +264,7 @@ class RAGAppState:
 
     def setup_lm(self) -> None:
         configure_ssl_from_env()
+        enable_debug_logging()
         dspy.configure(lm=dspy.LM(self.model, api_base=self.api_base, api_key=self.api_key))
 
     def ensure_index(self, reindex: bool = False, verbose: bool = False) -> None:
@@ -308,6 +309,7 @@ class RAGAppState:
 
 def build_embedder(embed_model: str, api_base: str, api_key: str):
     configure_ssl_from_env()
+    enable_debug_logging()
     return dspy.Embedder(
         embed_model,
         api_base=api_base,
@@ -332,3 +334,31 @@ def configure_ssl_from_env() -> None:
         raise RuntimeError(f"SSL_CERT_FILE points to missing file: {cert_path}")
     os.environ.setdefault("REQUESTS_CA_BUNDLE", cert_path)
     os.environ.setdefault("OPENAI_CA_BUNDLE", cert_path)
+
+
+def enable_debug_logging() -> None:
+    try:
+        import litellm
+    except Exception:
+        return
+    try:
+        litellm.set_verbose(True)
+        litellm.suppress_debug_info = False
+    except Exception:
+        return
+
+
+def format_exception_chain(exc: BaseException, max_depth: int = 6) -> str:
+    lines = []
+    current: BaseException | None = exc
+    depth = 0
+    while current and depth < max_depth:
+        message = str(current).strip()
+        label = current.__class__.__name__
+        if message:
+            lines.append(f"{label}: {message}")
+        else:
+            lines.append(label)
+        current = current.__cause__ or current.__context__
+        depth += 1
+    return "\nCaused by: ".join(lines)

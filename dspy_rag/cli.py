@@ -112,7 +112,12 @@ def main() -> None:
     )
 
     # Lazy imports here to avoid importing DSPy when only requesting --help.
-    from .rag import IndexManager, RAGAppState, configure_ssl_from_env
+    from .rag import (
+        IndexManager,
+        RAGAppState,
+        configure_ssl_from_env,
+        format_exception_chain,
+    )
     from .tui import FolderRAGTUI
 
     configure_ssl_from_env()
@@ -146,7 +151,7 @@ def main() -> None:
         app_state.ensure_index(reindex=args.reindex, verbose=args.verbose)
         print("Index ready. Launching TUI...")
     except Exception as exc:
-        print(f"Error: {exc}", file=sys.stderr)
+        print(f"Error:\n{format_exception_chain(exc)}", file=sys.stderr)
         sys.exit(1)
 
     tui = FolderRAGTUI(app_state)
