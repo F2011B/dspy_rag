@@ -1,0 +1,6 @@
+API Notes
+
+Base URL: https://internal.example/api
+Auth: Bearer token in Authorization header
+Rate limit: 120 requests/minute
+Timeout: 30 seconds

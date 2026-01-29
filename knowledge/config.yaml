@@ -1,0 +1,6 @@
+service:
+  name: atlas
+  retries: 3
+  timeout_seconds: 30
+alerts:
+  email: ops@example.com
