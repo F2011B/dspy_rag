@@ -6,8 +6,10 @@ import sys
 from pathlib import Path
 from urllib.parse import urlparse, urlunparse
 
-from .rag import IndexManager, RAGAppState, configure_ssl_from_env
-from .tui import FolderRAGTUI
+#
+# Lazy-import heavy modules inside main() so `-h` works even if deps
+# are not installed yet.
+#
 
 
 def normalize_lm_model(model: str, api_base: str | None) -> str:
@@ -99,7 +101,6 @@ def main() -> None:
 
     try:
         validate_args(args)
-        configure_ssl_from_env()
     except Exception as exc:
         parser.error(str(exc))
 
@@ -109,6 +110,12 @@ def main() -> None:
         if args.index_dir
         else root_dir / ".rag_index"
     )
+
+    # Lazy imports here to avoid importing DSPy when only requesting --help.
+    from .rag import IndexManager, RAGAppState, configure_ssl_from_env
+    from .tui import FolderRAGTUI
+
+    configure_ssl_from_env()
 
     index_manager = IndexManager(
         root_dir=root_dir,
