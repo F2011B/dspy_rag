@@ -16,6 +16,18 @@ source .venv/bin/activate
 pip install -e .
 ```
 
+For local embeddings:
+
+```bash
+pip install -e '.[local]'
+```
+
+For fastembed embeddings (offline-capable):
+
+```bash
+pip install -e '.[fastembed]'
+```
+
 ## Usage
 
 ```bash
@@ -45,6 +57,19 @@ python -m dspy_rag /path/to/folder --api-base https://api.openai.com/v1 --api-ke
 - `--verbose`: verbose logs
 
 Model names without a provider prefix are automatically normalized to `openai/<model>`.
+
+Local embedding models (no Hugging Face network)
+- You can pass a local model path or a pip-installed package resource:
+  - `--embed-model local:/path/to/model`
+  - `--embed-model /path/to/model`
+  - `--embed-model pkg:my_model_pkg` or `pkg:my_model_pkg/subdir`
+- This uses `sentence-transformers` and forces offline mode (`HF_HUB_OFFLINE=1`).
+- Install locally: `pip install sentence-transformers` and your model package (pip).
+
+Fastembed (offline, bundled in pip if provided)
+- Use `--embed-model fastembed` to load fastembed's default model.
+- Or `--embed-model fastembed:MODEL_NAME` to select a specific fastembed model.
+- Install: `pip install fastembed` or `pip install -e '.[fastembed]'`.
 
 ## Environment Variables
 

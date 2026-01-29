@@ -20,6 +20,12 @@ from .indexing import (
     save_metadata,
     save_stats,
 )
+from .embeddings import (
+    build_fastembedder,
+    build_local_embedder,
+    is_fastembed_spec,
+    is_local_model_spec,
+)
 
 
 @dataclass
@@ -310,6 +316,10 @@ class RAGAppState:
 def build_embedder(embed_model: str, api_base: str, api_key: str):
     configure_ssl_from_env()
     enable_debug_logging()
+    if is_local_model_spec(embed_model):
+        return build_local_embedder(embed_model)
+    if is_fastembed_spec(embed_model):
+        return build_fastembedder(embed_model)
     return dspy.Embedder(
         embed_model,
         api_base=api_base,

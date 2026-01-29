@@ -21,6 +21,12 @@ def normalize_lm_model(model: str, api_base: str | None) -> str:
 
 
 def normalize_embed_model(model: str) -> str:
+    if model == "fastembed" or model.startswith("fastembed:"):
+        return model
+    if model.startswith("local:") or model.startswith("pkg:"):
+        return model
+    if Path(model).expanduser().exists():
+        return model
     if "/" in model:
         return model
     return f"openai/{model}"
