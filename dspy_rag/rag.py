@@ -58,7 +58,10 @@ class FolderRAG:
         self.generator = dspy.Predict(GenerateAnswer)
 
     def answer(self, question: str) -> AnswerResult:
-        retrieval = self.embeddings(question)
+        try:
+            retrieval = self.embeddings(question)
+        except Exception as exc:
+            raise RuntimeError("Retrieval failed during embedding search") from exc
         passages: list[str] = list(getattr(retrieval, "passages", []) or [])
         indices: list[int] = list(getattr(retrieval, "indices", []) or [])
 
@@ -67,7 +70,10 @@ class FolderRAG:
 
         pairs = list(zip(indices, passages))[: self.topk]
         numbered_context = [f"[{idx + 1}] {text}" for idx, (_, text) in enumerate(pairs)]
-        prediction = self.generator(context=numbered_context, question=question)
+        try:
+            prediction = self.generator(context=numbered_context, question=question)
+        except Exception as exc:
+            raise RuntimeError("Generation failed during LLM call") from exc
         raw_answer = prediction.answer.strip() if getattr(prediction, "answer", None) else ""
 
         sources: list[Source] = []
@@ -193,30 +199,42 @@ class IndexManager:
         return build_fingerprint_from_dir(self.root_dir, self.max_file_size)
 
     def build(self, verbose: bool = False) -> IndexPayload:
-        payload = build_index_payload(
-            self.root_dir,
-            chunk_size=self.chunk_size,
-            chunk_overlap=self.chunk_overlap,
-            max_file_size=self.max_file_size,
-        )
+        try:
+            payload = build_index_payload(
+                self.root_dir,
+                chunk_size=self.chunk_size,
+                chunk_overlap=self.chunk_overlap,
+                max_file_size=self.max_file_size,
+            )
+        except Exception as exc:
+            raise RuntimeError("Indexing failed during file scan/chunking") from exc
         if not payload.corpus:
             raise RuntimeError("No indexable text files found.")
 
-        embedder = build_embedder(self.embed_model, self.api_base, self.api_key)
-        brute_force_threshold = resolve_bruteforce_threshold()
-        embeddings = dspy.Embeddings(
-            payload.corpus,
-            embedder,
-            k=self.topk,
-            brute_force_threshold=brute_force_threshold,
-        )
+        try:
+            embedder = build_embedder(self.embed_model, self.api_base, self.api_key)
+            brute_force_threshold = resolve_bruteforce_threshold()
+            embeddings = dspy.Embeddings(
+                payload.corpus,
+                embedder,
+                k=self.topk,
+                brute_force_threshold=brute_force_threshold,
+            )
+        except Exception as exc:
+            raise RuntimeError("Indexing failed during embedding generation") from exc
         self.index_dir.mkdir(parents=True, exist_ok=True)
-        embeddings.save(self._embeddings_dir())
+        try:
+            embeddings.save(self._embeddings_dir())
+        except Exception as exc:
+            raise RuntimeError("Indexing failed while saving embeddings") from exc
 
-        save_metadata(self.index_dir, payload.metadata)
-        save_fingerprint(self.index_dir, payload.fingerprint)
-        save_config(self.index_dir, self._config_payload())
-        save_stats(self.index_dir, payload.stats)
+        try:
+            save_metadata(self.index_dir, payload.metadata)
+            save_fingerprint(self.index_dir, payload.fingerprint)
+            save_config(self.index_dir, self._config_payload())
+            save_stats(self.index_dir, payload.stats)
+        except Exception as exc:
+            raise RuntimeError("Indexing failed while saving metadata") from exc
 
         self._metadata = [meta.__dict__ for meta in payload.metadata]
         self._embeddings = embeddings
