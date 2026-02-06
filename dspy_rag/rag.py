@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable, Iterable
 
 
 import dspy
@@ -11,6 +12,7 @@ from .indexing import (
     IndexStats,
     build_index_payload,
     build_fingerprint_from_dir,
+    build_fingerprint_from_paths,
     load_config,
     load_fingerprint,
     load_metadata,
@@ -110,6 +112,98 @@ class FolderRAG:
         return AnswerResult(answer=raw_answer, sources=sources)
 
 
+class ToolingAnswer(dspy.Signature):
+    """Answer questions using the knowledge base and tools.
+
+    Always use search_knowledge for factual questions and cite sources like [1].
+    Use calculate for math questions. Reply in German.
+    """
+
+    question: str = dspy.InputField()
+    answer: str = dspy.OutputField(
+        desc="Antwort auf Deutsch mit Quellenangaben [n], falls Wissen genutzt wurde."
+    )
+
+
+class ToolingRAG:
+    def __init__(self, embeddings, metadata: list[dict], topk: int, max_iters: int = 6):
+        self.embeddings = embeddings
+        self.embeddings.k = topk
+        self.metadata = metadata
+        self.topk = topk
+        self.max_iters = max_iters
+        self._last_sources: list[Source] = []
+        self.agent = dspy.ReAct(
+            signature=ToolingAnswer,
+            tools=[self.search_knowledge, self.calculate],
+            max_iters=max_iters,
+        )
+
+    def search_knowledge(self, query: str) -> str:
+        """Search the knowledge base and return numbered passages for citation."""
+        try:
+            retrieval = self.embeddings(query)
+        except Exception as exc:
+            self._last_sources = []
+            return f"Search failed: {exc}"
+        passages: list[str] = list(getattr(retrieval, "passages", []) or [])
+        indices: list[int] = list(getattr(retrieval, "indices", []) or [])
+
+        if not passages:
+            self._last_sources = []
+            return "No relevant context found."
+
+        pairs = list(zip(indices, passages))[: self.topk]
+        numbered_context = [f"[{idx}] {text}" for idx, (_, text) in enumerate(pairs, start=1)]
+
+        sources: list[Source] = []
+        for local_idx, (corpus_idx, passage) in enumerate(pairs, start=1):
+            meta = self.metadata[corpus_idx]
+            snippet = passage.replace("\n", " ").strip()
+            if len(snippet) > 240:
+                snippet = snippet[:237] + "..."
+            sources.append(
+                Source(
+                    number=local_idx,
+                    rel_path=meta["rel_path"],
+                    chunk_index=meta["chunk_index"],
+                    start_line=meta.get("start_line"),
+                    end_line=meta.get("end_line"),
+                    snippet=snippet,
+                )
+            )
+        self._last_sources = sources
+        return "\n".join(numbered_context)
+
+    def calculate(self, expression: str) -> str:
+        """Safely evaluate mathematical expressions."""
+        try:
+            interpreter = dspy.PythonInterpreter()
+            result = interpreter.execute(expression)
+            return str(result)
+        except Exception as exc:
+            return f"Error: {exc}"
+
+    def answer(self, question: str) -> AnswerResult:
+        self._last_sources = []
+        try:
+            prediction = self.agent(question=question)
+        except Exception as exc:
+            raise RuntimeError("Tooling agent failed during LLM call") from exc
+
+        raw_answer = prediction.answer.strip() if getattr(prediction, "answer", None) else ""
+        sources = list(self._last_sources)
+
+        if not raw_answer:
+            return AnswerResult(answer="", sources=sources)
+
+        if sources and "[" not in raw_answer:
+            cite_list = " ".join(f"[{source.number}]" for source in sources)
+            raw_answer = f"{raw_answer}\n\nSources: {cite_list}".strip()
+
+        return AnswerResult(answer=raw_answer, sources=sources)
+
+
 class IndexManager:
     def __init__(
         self,
@@ -122,6 +216,7 @@ class IndexManager:
         api_base: str,
         api_key: str,
         topk: int,
+        include_paths: Iterable[Path] | None = None,
     ):
         self.root_dir = root_dir
         self.index_dir = index_dir
@@ -132,6 +227,7 @@ class IndexManager:
         self.api_base = api_base
         self.api_key = api_key
         self.topk = topk
+        self.include_paths = [Path(path).expanduser().resolve() for path in include_paths] if include_paths else None
 
         self._metadata: list[dict] = []
         self._embeddings = None
@@ -153,12 +249,29 @@ class IndexManager:
         return self._stats
 
     def _config_payload(self) -> dict:
-        return {
+        payload = {
             "chunk_size": self.chunk_size,
             "chunk_overlap": self.chunk_overlap,
             "max_file_size": self.max_file_size,
             "embed_model": self.embed_model,
         }
+        include_paths = self._normalized_include_paths()
+        if include_paths:
+            payload["include_paths"] = include_paths
+        return payload
+
+    def _normalized_include_paths(self) -> list[str] | None:
+        if not self.include_paths:
+            return None
+        normalized: list[str] = []
+        root = self.root_dir.resolve()
+        for path in self.include_paths:
+            try:
+                rel_path = path.resolve().relative_to(root)
+                normalized.append(str(rel_path))
+            except ValueError:
+                normalized.append(path.name)
+        return sorted(set(normalized))
 
     def _embeddings_dir(self) -> Path:
         return self.index_dir / "embeddings"
@@ -202,6 +315,10 @@ class IndexManager:
         return existing.get("sha256") != current.get("sha256")
 
     def _current_fingerprint(self) -> dict:
+        if self.include_paths:
+            return build_fingerprint_from_paths(
+                self.root_dir, self.max_file_size, self.include_paths
+            )
         return build_fingerprint_from_dir(self.root_dir, self.max_file_size)
 
     def build(self, verbose: bool = False) -> IndexPayload:
@@ -211,6 +328,7 @@ class IndexManager:
                 chunk_size=self.chunk_size,
                 chunk_overlap=self.chunk_overlap,
                 max_file_size=self.max_file_size,
+                include_paths=self.include_paths,
             )
         except Exception as exc:
             raise RuntimeError("Indexing failed during file scan/chunking") from exc
@@ -260,13 +378,15 @@ class RAGAppState:
         api_base: str,
         api_key: str,
         topk: int,
+        rag_factory: Callable[[object, list[dict], int], object] | None = None,
     ):
         self.index_manager = index_manager
         self.model = model
         self.api_base = api_base
         self.api_key = api_key
         self.topk = topk
-        self._rag: FolderRAG | None = None
+        self.rag_factory = rag_factory or (lambda embeddings, metadata, topk: FolderRAG(embeddings, metadata, topk))
+        self._rag: object | None = None
 
     def setup_lm(self) -> None:
         configure_ssl_from_env()
@@ -280,17 +400,23 @@ class RAGAppState:
             loaded = self.index_manager.load()
             if not loaded:
                 self.index_manager.build(verbose=verbose)
-        self._rag = FolderRAG(self.index_manager.embeddings, self.index_manager.metadata, self.topk)
+        self._rag = self.rag_factory(
+            self.index_manager.embeddings, self.index_manager.metadata, self.topk
+        )
 
     def reload(self) -> bool:
         loaded = self.index_manager.load()
         if loaded:
-            self._rag = FolderRAG(self.index_manager.embeddings, self.index_manager.metadata, self.topk)
+            self._rag = self.rag_factory(
+                self.index_manager.embeddings, self.index_manager.metadata, self.topk
+            )
         return loaded
 
     def reindex(self, verbose: bool = False) -> None:
         self.index_manager.build(verbose=verbose)
-        self._rag = FolderRAG(self.index_manager.embeddings, self.index_manager.metadata, self.topk)
+        self._rag = self.rag_factory(
+            self.index_manager.embeddings, self.index_manager.metadata, self.topk
+        )
 
     def answer(self, question: str) -> AnswerResult:
         if self._rag is None:
@@ -299,7 +425,7 @@ class RAGAppState:
 
     def stats_payload(self) -> dict:
         stats = self.index_manager.stats
-        return {
+        payload = {
             "files": stats.files_indexed if stats else 0,
             "chunks": stats.chunks if stats else 0,
             "bytes": stats.total_bytes if stats else 0,
@@ -311,6 +437,10 @@ class RAGAppState:
             "model": self.model,
             "embed_model": self.index_manager.embed_model,
         }
+        include_paths = self.index_manager._normalized_include_paths()
+        if include_paths:
+            payload["include_paths"] = include_paths
+        return payload
 
 
 def build_embedder(embed_model: str, api_base: str, api_key: str):

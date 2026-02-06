@@ -42,6 +42,36 @@ You can also use module mode:
 python -m dspy_rag /path/to/folder --api-base https://api.openai.com/v1 --api-key $OPENAI_API_KEY
 ```
 
+## Custom GPT (File + Tools)
+
+Use a single knowledge file (or a folder) and enable tool use via a ReAct agent:
+
+```bash
+dspy_custom_gpt /path/to/knowledge.txt \\
+  --api-base https://api.openai.com/v1 \\
+  --api-key $OPENAI_API_KEY
+```
+
+If you pass a folder, it indexes the folder like `dspy_rag` but answers using tools.
+
+Available tools:
+- `search_knowledge`: retrieves passages from the local knowledge base for grounded answers.
+- `calculate`: evaluates math expressions.
+
+Options:
+- `--max-iters <N>`: max tool steps for the agent (default: 6).
+- `--no-rag`: disable embeddings and use keyword-based local text search.
+
+No-RAG example (no embeddings at all):
+
+```bash
+dspy_custom_gpt /path/to/knowledge.txt \\
+  --api-base https://openrouter.ai/api/v1 \\
+  --api-key $OPENROUTER_API_KEY \\
+  --model openrouter/openai/gpt-4o-mini \\
+  --no-rag
+```
+
 ## CLI Options
 
 - `--api-base <URL>`: OpenAI-compatible base URL (required)

@@ -26,6 +26,7 @@ fastembed = [
 
 [project.scripts]
 dspy_rag = "dspy_rag.cli:main"
+dspy_custom_gpt = "dspy_rag.custom_cli:main"
 
 [tool.ruff]
 line-length = 100

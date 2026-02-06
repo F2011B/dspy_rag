@@ -175,6 +175,35 @@ def iter_files(root_dir: Path, max_file_size: int) -> Iterable[FileRecord]:
             yield FileRecord(path=path, rel_path=rel_path, size=stat.st_size, mtime=stat.st_mtime)
 
 
+def iter_explicit_files(
+    paths: Iterable[Path], root_dir: Path, max_file_size: int
+) -> Iterable[FileRecord]:
+    root_dir = root_dir.resolve()
+    seen: set[Path] = set()
+    for candidate in paths:
+        path = candidate.expanduser().resolve()
+        if path in seen:
+            continue
+        seen.add(path)
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        if not path.is_file():
+            continue
+        if stat.st_size > max_file_size:
+            continue
+        if not is_text_filename(path):
+            continue
+        if is_binary_file(path):
+            continue
+        try:
+            rel_path = str(path.relative_to(root_dir))
+        except ValueError:
+            rel_path = path.name
+        yield FileRecord(path=path, rel_path=rel_path, size=stat.st_size, mtime=stat.st_mtime)
+
+
 def chunk_text(text: str, chunk_size: int, chunk_overlap: int) -> list[tuple[str, int, int]]:
     if chunk_size <= 0:
         raise ValueError("chunk_size must be > 0")
@@ -219,6 +248,7 @@ def build_index_payload(
     chunk_size: int,
     chunk_overlap: int,
     max_file_size: int,
+    include_paths: Iterable[Path] | None = None,
 ) -> IndexPayload:
     start_time = time.time()
     corpus: list[str] = []
@@ -226,7 +256,12 @@ def build_index_payload(
     file_records: list[FileRecord] = []
     total_bytes = 0
 
-    for record in iter_files(root_dir, max_file_size=max_file_size):
+    records_iter = (
+        iter_explicit_files(include_paths, root_dir, max_file_size)
+        if include_paths
+        else iter_files(root_dir, max_file_size=max_file_size)
+    )
+    for record in records_iter:
         file_records.append(record)
         total_bytes += record.size
         try:
@@ -278,6 +313,13 @@ def build_fingerprint(records: list[FileRecord]) -> dict:
 
 def build_fingerprint_from_dir(root_dir: Path, max_file_size: int) -> dict:
     records = list(iter_files(root_dir, max_file_size=max_file_size))
+    return build_fingerprint(records)
+
+
+def build_fingerprint_from_paths(
+    root_dir: Path, max_file_size: int, include_paths: Iterable[Path]
+) -> dict:
+    records = list(iter_explicit_files(include_paths, root_dir, max_file_size=max_file_size))
     return build_fingerprint(records)
 
 
